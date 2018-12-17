@@ -1,0 +1,217 @@
+//INCOMPLETE.  THIS CODE IS A COMBINATION OF THE ESP8266 AND ARDUINO UNO FUNCTIONS BEING WRITTEN FOR ESP32 HW.
+//THIS IS BEING DONE TO TAKE ADVANTAGE OF THE 12 BIT ADC, MULTITHREADING, 40MHz PROCESSING ETC.
+
+
+
+//AM I NECESSARY?
+#include <SPI.h>
+//AM I NECESSARY?
+
+#include <PubSubClient.h>
+#include <ESP8266WiFi.h>
+const char* ssid = "TAKTL";
+const char* password = "ConcreteConnection2016#";
+char* topic = "Casting";
+char* server = "10.10.10.193";
+String clientName;
+String str;
+
+int sensorpin[3] =  {33, 34, 35};
+int sensorzero[3] = {};
+bool zeroflag = true;
+
+int minMeasure = 105;
+int maxMeasure = 155;
+
+#include <Wire.h>
+#include "LedControl.h"
+LedControl dispMaster = LedControl(21,22,25,3); 
+
+#include <QuickStats.h>
+QuickStats stats;
+
+String macToStr(const uint8_t* mac)
+{
+  String result;
+  for (int i = 0; i < 6; ++i) {
+    result += String(mac[i], 16);
+    if (i < 5)
+      result += ':';
+  }
+  return result;
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(10);
+  Serial.println();
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    
+    
+    
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+  
+  clientName += "esp32-";
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  clientName += macToStr(mac);
+  clientName += "-";
+  clientName += String(micros() & 0xff, 16);
+  Serial.print("Connecting to ");
+  Serial.print(server);
+  Serial.print(" as ");
+  Serial.println(clientName);
+  if (client.connect((char*) clientName.c_str())) {
+    Serial.println("Connected to MQTT broker");
+    Serial.print("Topic is: ");
+    Serial.println(topic);
+    if (client.publish(topic, "hello from ESP32")) {
+      Serial.println("Publish ok");
+    }
+    else {
+      Serial.println("Publish failed");
+    }
+  }
+  else {
+    Serial.println("MQTT connect failed");
+    Serial.println("Will reset and try again...");
+
+    //////////
+    //COMMENT ME BACK IN!
+    //////////
+    //abort();
+    //////////
+  }
+
+  //Wake up the MAX72XX from power-saving mode
+  dispMaster.shutdown(L, false);
+  dispMaster.shutdown(C, false);
+  dispMaster.shutdown(R, false);
+  //Set full brightness for the LEDs
+  dispMaster.setIntensity(L,15);
+  dispMaster.setIntensity(C,15);
+  dispMaster.setIntensity(R,15);
+
+
+  //ATTACH 'ZERO' INTERRUPT
+  byte ZeroPin = 2
+  attachInterrupt(digitalPinToInterrupt(ZeroPin,ZERO,FALL);
+  //ATTACH 'START/STOP' INTERRUPT
+  byte LogPin = 4
+  attachInterrupt(digitalPinToInterrupt(LogPin,STARTSTOP,FALL);
+  //pinMode(5, INPUT); //BEGINNING/END OF CASTING  
+}
+
+void ZERO(){
+  zeroflag = 1;
+  Serial.println("Zero flag set")
+}
+
+void STARTSTOP(){
+  //MQTT MESSAGE  
+}
+
+
+
+
+
+
+
+void loop() {
+  String payload = "";
+  int sensorRaw = 0;
+  int numSamples = 20;
+  float collector[numSamples];
+  float finalmeas[3];
+  
+  //SET ZERO LOOP
+  if (zeroflag = true){
+    zeroflag = false;
+    for(int i = 0; i < 3; i++){
+      Serial.print("sensor: ");
+      Serial.println(i);
+      do{
+        for(int j = 0; j < numSamples; j++){
+          sensorRaw = analogRead(sensorpin(i));
+          
+          //DO MATH TO CONVERT FROM BITS TO DISTANCE???
+          //sensorRaw = sensorRaw/1170
+   
+          collector[j]= sensorRaw;
+          Serial.print("Measurement ");
+          Serial.print(j);
+          Serial.print(": ");
+          Serial.println(sensorRaw);
+          delay(20);
+        }
+      //REVIEW THIS WHILE LOOP CONDITIONAL STATEMENTS FOR 12BIT ADC
+      }while((abs(stats.mode(collector,numSamples,0.00001)- stats.average(collector,numSamples) > 1.5)) || stats.CV(collector,numSamples)>1.50);
+      
+      sensorzero[i]=stats.mode(collector,numSamples,0.00001);
+      Serial.print("sensor ");
+      Serial.print(i);
+      Serial.print(" zero: ");
+      Serial.println(sensorzero[i]);
+
+      payload += "zero " + String(i) + ": " + String(sensorzero[i]) + ",";
+    }
+  }
+
+  //RECORD DISTANCE LOOP
+  for(int i = 0; i < 3; i++){
+      do{
+        for(int j = 0; j < numSamples; j++){
+          sensorRaw = analogRead(sensorpin(i));
+          collector[j]= sensorRaw;
+          
+          delay(20);
+        }
+      //REVIEW THIS WHILE LOOP CONDITIONAL STATEMENTS FOR 12BIT ADC
+      }while((abs(stats.mode(measurementArray,numSamples,0.00001)- stats.average(measurementArray,numSamples) > 1.5)) || stats.CV(measurementArray,numSamples)>1.50);
+
+      finalmeas[i]=stats.mode(collector,numSamples,0.00001);
+      
+      Serial.print("sensor ");
+      Serial.print(i);
+      Serial.print(" measurement: ");
+      Serial.println(sensorzero[i]);
+
+      payload += "measurement " + String(i) + ": " + String(sensorzero[i]) + ",";     
+      
+  }
+  
+  //for(i = 0; i <3; i++){
+    //CONVERT FROM MEASUREMENTS TO CHARACTERS
+    //analogstr = String(finalmeas[i]);
+
+    //for(j = 0; j<5, j++){
+    //  chars[j] = analogstr.charAt(0);
+    //}
+  }
+
+
+
+
+  //MQTT PUB
+  client.publish(topic,payload);
+  Serial.print("Published: ");
+  Serial.println(payload);
+
+  //DELAY
+
+}
+
+
+
+  
