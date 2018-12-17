@@ -1,7 +1,7 @@
 //Created by Ethan Kingsley for TAKTL, LLC
-//Last updated 11/12/2018 by Jordan Andrew Himes
+//Last updated 12/17/2018 by Jordan Andrew Himes
 //Note:  Much functionality has changed from the original concept
-//namely, data filtering and writing publishing to Serial rather than SD card.
+//namely, data filtering and publishing to Serial rather than SD card.
 
 //Might want to have a few different error outputs to serial so if a problem occurs you can simply connect the arduino to a PC 
 //to find out more easily and accurately what issue is occurring. Or output error codes to the displays and have an error code
