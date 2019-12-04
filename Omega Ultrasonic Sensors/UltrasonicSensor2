@@ -1,0 +1,516 @@
+//Created by Ethan Kingsley for TAKTL, LLC
+//Last updated 12/17/2018 by Jordan Andrew Himes
+//Note:  Much functionality has changed from the original concept
+//namely, data filtering and publishing to Serial rather than SD card.
+
+//Might want to have a few different error outputs to serial so if a problem occurs you can simply connect the arduino to a PC 
+//to find out more easily and accurately what issue is occurring. Or output error codes to the displays and have an error code
+//reference sheet. Outputting to logfile if there is not a logfile error could be useful as well.
+
+
+//---- <SD Card Initialization> ----//
+
+#include <SPI.h>
+//#include <SD.h>
+//const int chipSelect = 10; //"Card Select" pin set determined by the hardware i.e. Adafruit Data Logging Shields
+
+//String fileName = String("");
+
+//---- <RTC Initialization> ----//
+#include <Wire.h>
+#include "RTClib.h"
+//This is just declaring the type of real time clock present on the data logging board. Rev B of the board (which we have) uses
+//a PCF8523 RTC chip
+RTC_PCF8523 RTC; 
+
+
+#include <QuickStats.h>
+QuickStats stats;
+
+//---- <7 Segment Display Initialization> ----//
+
+#include "LedControl.h"
+//Must use pins 9 8 and 7 because the SD library uses 13 12 11. 3 Designates the number of MAX7221's
+//Pin 9 => Data In
+//Pin 8 => CLK
+//Pin 7 => Load
+LedControl dispMaster = LedControl(9,8,7,3); 
+
+const int L = 0; //LeftSensor will be set as the first (zeroeth) MAX7221
+const int C = 1;
+const int R = 2;
+
+byte firstDigit = 0; // do these need to be global?
+byte secondDigit = 0;
+byte thirdDigit = 0;
+byte fourthDigit = 0;
+
+
+//---- <Sensor Initialization> ----//
+
+//These are all global volatile variables so they can be easily accessed by the ISR (interrupt service routine)
+double sensorLDistance = 0;
+double sensorCDistance = 0;
+double sensorRDistance = 0;
+
+double zeroL = 0;
+double zeroC = 0;
+double zeroR = 0;
+double zeroLdec = 0;
+double zeroCdec = 0;
+double zeroRdec = 0;
+
+double prevL = 0;
+double prevC = 0;
+double prevR = 0;
+
+
+
+double minMeasurement = 105.0; //millimeters. Can't do 100 even because the min sensing distance for these sensors is 101.6mm
+double maxMeasurement = 155.0;
+
+
+void setup() {
+  
+	Serial.begin(57600);
+	
+	 //---- <7 Segment Display Setup> ----//
+	//Wake up the MAX72XX from power-saving mode
+	dispMaster.shutdown(L, false);
+	dispMaster.shutdown(C, false);
+	dispMaster.shutdown(R, false);
+  
+	//Set full brightness for the LEDs
+	dispMaster.setIntensity(L,15);
+	dispMaster.setIntensity(C,15);
+	dispMaster.setIntensity(R,15);
+  
+	//---- </7 Segment Display Setup> ----//
+	
+	//---- <RTC> ----//
+	//Below code begins the Wire library as well as checking to see if the RTC starts when commanded (RTC.begin)
+	
+	//Wire.begin();
+
+	//This doesn't seem to detect when the battery is removed so I'm not really sure what it's checking
+	//if (!RTC.begin())
+	//{
+	//	Serial.println("RTC failed to begin.");
+	///	error(3);
+	//}
+	  
+	//If the coin-cell battery ever dies you will need to run the below line of code while having the arduino connected
+	//to a PC. This will set the RTC to the correct time. Make sure to comment this code again and reupload. If you leave 
+	//The RTC.adjust code on the arduino the RTC will keep resetting to some value whenever the arduino is turned on. 
+	//RTC.adjust(DateTime(F(__DATE__), F(__TIME__)));
+	
+	//---- </RTC> ----//
+	
+	//---- <SD Card> ----//
+	//Set the "Chip Select Pin" to output. SD Code doesn't work if this isn't done.
+	//pinMode(10, OUTPUT); 
+	
+	//Check to see if an SD Card is present and if so initialize the SD Card
+//	Serial.print("Initializing SD card...");
+//	
+//	if (!SD.begin(chipSelect)) 
+//	{
+//  //		error(1);
+//	}
+//	else
+//	{
+//	  Serial.println("card initialized.");
+//	}
+  
+//  memoryCapacityCheck();
+	
+	//---- </SD Card> ----//
+  
+	//---- <Programming Setup> ----//
+	pinMode(3, INPUT); //Absolute/Relative switch
+
+	pinMode(4, INPUT_PULLUP); //Left zero
+	pinMode(5, INPUT_PULLUP); //Center zero
+	pinMode(6, INPUT_PULLUP); //Right zero
+
+  pinMode(A0, INPUT);
+  pinMode(A1, INPUT);
+  pinMode(A2, INPUT);
+	
+	//---- </Programming Setup> ----//
+	
+	
+	//Need to separate the log files by month also, via the logfile name having the month and year in it
+
+//	DateTime now = RTC.now();
+//	fileName += String(now.month()) + String(now.year()) + ".CSV";
+//
+//  if (!SD.exists(fileName))
+//  {
+//	File logFile = SD.open(fileName, FILE_WRITE); //8 character limit to file names, be careful
+//	logFile.println(F("Date,Time,L Sensor Zeroed,C Sensor Zeroed,R Sensor Zeroed"));	  
+//    logFile.close();
+//  }
+
+  Serial.print("SETUP");
+
+}
+
+void loop() {
+	
+	String dataString = "";
+	
+	//---- <Zeroing Buttons Check> ----//
+	//Users simply press and hold buttons to zero.
+	
+	if (digitalRead(4) == LOW)
+		{
+      Serial.println("Zero button triggered");
+			zeroL = int(sensorLDistance);
+      zeroLdec = sensorLDistance - zeroL;
+      zeroL = zeroL + zeroLdec;
+      zeroC = int(sensorCDistance);
+      zeroCdec = sensorCDistance - zeroC;
+      zeroC = zeroC + zeroCdec;
+      zeroR = int(sensorRDistance);
+      zeroRdec = sensorRDistance - zeroR;
+      zeroR = zeroR + zeroRdec;
+		}
+	if (digitalRead(5) == LOW)
+		{
+
+		}
+	if (digitalRead(6) == LOW)
+		{
+      Serial.println("Wakeup Display button triggered");
+   //---- <7 Segment Display Setup> ----//
+  //Wake up the MAX72XX from power-saving mode
+  dispMaster.shutdown(L, false);
+  dispMaster.shutdown(C, false);
+  dispMaster.shutdown(R, false);
+  
+  //Set full brightness for the LEDs
+  dispMaster.setIntensity(L,15);
+  dispMaster.setIntensity(C,15);
+  dispMaster.setIntensity(R,15);
+	}
+	
+	//---- </Zeroing Buttons Check> ----//
+	
+	//--Read the Distance from the Ultrasonic Sensors--//
+	sensorRead(L);
+	sensorRead(C);
+	sensorRead(R);
+	
+	//--Log the Data to the SD Card--//
+	//dataLog(); 
+
+	//--Update 7 Segment Displays--//
+	dispUpdate(L, sensorLDistance);
+	dispUpdate(C, sensorCDistance);
+	dispUpdate(R, sensorRDistance);
+
+  //DateTime now = RTC.now();
+  //dataString = String(now.hour()) + ":" + String(now.minute()) + ":" + String(now.second()) + ",";
+  dataString = String(zeroL - sensorLDistance) + ",";
+  dataString += String(zeroC - sensorCDistance) + ",";
+  dataString += String(zeroR - sensorRDistance);
+
+  Serial.println(dataString);
+	delay(1000);
+}
+
+void dispUpdate(int disp, double absoluteSensorDistance)
+{
+	double relativeSensorDistance = 0;
+	int mode = digitalRead(3);
+	double zeroDistance = 0;
+	
+	//--Apply Each Zero Value to the Correct Display--//
+	switch(disp) 
+	{
+		case L:
+			zeroDistance = zeroL;
+    break;
+		case C:
+			zeroDistance = zeroC;
+    break;
+		case R:
+			zeroDistance = zeroR;
+	break;
+	}
+	
+	//---- <Max Value Cap for Relative Mode> ----//
+	//Round to 99.9 for "relative mode" when the measurement is based off zero
+	if (mode == HIGH)
+   {
+		//zero-sensorDistance leads to a positive value when the sensorDistance value is less than the zero point, i.e. when the panel is thicker than the side rail
+		relativeSensorDistance = zeroDistance - absoluteSensorDistance; 
+
+		//Display the negative sign if the value is negative
+		if (absoluteSensorDistance > zeroDistance) 
+		{
+			relativeSensorDistance = relativeSensorDistance * -1;
+			dispMaster.setChar(disp, 0, '-',0);
+		}
+		else
+		{
+			dispMaster.setChar(disp, 0, ' ', 0);
+		}
+   
+		if (relativeSensorDistance > 99.9)
+		{
+			relativeSensorDistance = 99.9;
+		}
+
+		threeDigitSeparation(relativeSensorDistance);
+   }
+   
+   //---- </Max Value Cap for Relative Mode> ----//
+   
+   //---- <Max Value Cap for Absolute Mode> ----//
+   //Round to 999.9 for "absolute mode" when the measurement is not taking into account the zeroed position 
+	else if (mode == LOW)
+	{
+		fourDigitSeparation(absoluteSensorDistance);
+		dispMaster.setDigit(disp, 0, firstDigit, 0);
+		
+		if (absoluteSensorDistance > 999.9)
+		{
+			absoluteSensorDistance = 999.9;
+		}
+   }
+   
+	//--Display the Measurement Value--//
+	//Only the second, third, and fourth digit needs to be updated in this section because
+	//The first digit is dependent on if we're in relative or absolute mode, and as such
+	//The display of the first digit is handled in the "Max Value Cap" sections above.
+	dispMaster.setDigit(disp, 1, secondDigit, 0); 
+	dispMaster.setDigit(disp, 2, thirdDigit, 1); 
+	dispMaster.setDigit(disp, 3, fourthDigit, 0);
+
+}
+
+void sensorRead(int sensor)
+{
+	//This function reads the analog input, converts it from bits to volts, then from volts to mm
+	//The function takes in only the sensor number (in the form of constant L C or R) and updates the correct glboal variable
+	int sensorRaw = 0;
+	double sensorVolts = 0;
+	double sensorDistance = 0;
+	int numSamples = 20;
+	float measurementArray[numSamples];
+
+
+  //Serial.print("sensor: ");
+  //Serial.println(sensor);
+	do{
+	for (int i = 0; i<numSamples; i++)
+	{
+		sensorRaw = analogRead(sensor);
+		measurementArray[i] = sensorRaw;
+    //Serial.print("Measurement ");
+    //Serial.print(i);
+    //Serial.print(": ");
+    //Serial.println(sensorRaw);
+    delay(10);
+	}
+
+
+	}while((abs(stats.mode(measurementArray,numSamples,0.00001)- stats.average(measurementArray,numSamples) > 1.5)) || stats.CV(measurementArray,numSamples)>1.50);
+
+	sensorVolts = stats.mode(measurementArray,numSamples,0.00001)/204.6;
+	sensorDistance = minMeasurement + (sensorVolts * ((maxMeasurement - minMeasurement)/5));
+
+  
+	sensorDistance = roundDistance(sensorDistance);
+	//--Attribute the Distance Measurement to the Correct Sensor--//
+	if (sensor == L)
+	{
+		  sensorLDistance = sensorDistance;
+	}
+	else if (sensor == C)
+	{
+      sensorCDistance = sensorDistance;
+	}
+	else if (sensor == R)
+	{
+      sensorRDistance = sensorDistance;
+	}
+}
+
+double roundDistance(double sensorDistance)
+{
+	//Rounds the distance measurement to the nearest 0.5mm
+	int sensorDistanceInt = 0;
+	int decimal = 0;
+	
+	//--Convert the Sensor Distance to an Integer--//
+	sensorDistanceInt = sensorDistance;
+	
+	//--Extract the Tenths Place From the Distance Measurement--//
+	decimal = 10*(sensorDistance - sensorDistanceInt);
+
+	//--Round the Decimal to the nearest 0 or 5--//
+	if ((decimal < 5) && ((decimal - (decimal%3)) == 0))
+	{
+		decimal = 0;
+	}
+	else if ((decimal < 5) && ((decimal - (decimal%3)) > 0))
+	{
+		decimal = 5;
+	}
+	else if ((decimal >= 5) && (decimal - (decimal%4) == 4))
+	{
+		decimal = 5;
+	}
+	else
+	{
+		decimal = 10;
+	}
+	
+	//--Put the Tenths Place Back into the Measurement, Now Rounded--//
+	sensorDistance = sensorDistanceInt + ((double)decimal/10);
+	
+	return sensorDistance;
+	
+}
+
+void fourDigitSeparation(double sensorDistance)
+{
+	//Function for separating a four digit number into four individual numbers to be displayed (i.e. in the case of Absolute mode)
+	
+	int val = sensorDistance * 10; 
+	int firstRem = val % 1000;
+	int firstUndivided = val - firstRem;
+	firstDigit = firstUndivided/1000;
+
+	int secondRem = val % 100;
+	int secondUndivided = val - firstUndivided - secondRem;
+	secondDigit = secondUndivided/100;
+
+	int thirdRem = val % 10;
+	int thirdUndivided = val - firstUndivided - secondUndivided - thirdRem;
+	thirdDigit = thirdUndivided/10;
+
+	fourthDigit = thirdRem;
+
+}
+
+void threeDigitSeparation(double sensorDistance)
+{
+	//Function for separating a three digit number into three individual numbers to be displayed (i.e. in the case of Relative mode)
+	int val = sensorDistance * 10; 
+  
+	int secondRem = val % 100;
+	int secondUndivided = val - secondRem;
+	secondDigit = secondUndivided/100;
+  
+	int thirdRem = val % 10;
+	int thirdUndivided = val - secondUndivided - thirdRem;
+	thirdDigit = thirdUndivided/10;
+
+	fourthDigit = thirdRem;
+
+}
+
+//void dataLog()
+//{
+//  
+//  //May want to add in logging the absolute data, but perhaps don't have the python program plot it unless people specifically want to see it
+//  Serial.println("Entered dataLog function");
+//  String dataString = ""; //Making a string to which we will append all the data;
+//
+//	DateTime now = RTC.now();
+//	//Print MM/DD/YYYY, HH:MM:SS, LDistance, CDistance, RDistance all distances are their relative values 
+//  
+//	dataString += String(now.month()) + "/" + String(now.day()) + "/" + String(now.year()) + ",";
+//	dataString += String(now.hour()) + ":" + String(now.minute()) + ":" + String(now.second()) + ",";
+//
+//	dataString += String(zeroL - sensorLDistance) + ",";
+//	dataString += String(zeroC - sensorCDistance) + ",";
+//	dataString += String(zeroR - sensorRDistance);
+//  
+//  //Open data file. FILE_WRITE will allow appending to the current file, it will not overwrite
+//  File logFile = SD.open(fileName, FILE_WRITE);
+//
+//  if (logFile) {
+//    logFile.println(dataString);
+//    logFile.close();
+//    // print to the serial port too:
+//    Serial.println(dataString);
+//  }
+//  // if the file isn't open, pop up an error:
+//  else {
+//    Serial.println("error opening Log File, " + fileName);
+//  }
+//
+//}
+
+void error(int code)
+{
+  //switch case going through codes which output error descriptions to serial monitor 
+	
+	switch(code)
+	{
+		case(1):
+			Serial.println(F("No SD Card present, or error with the SD Shield. Try removing and reinserting SD Card or replacing SD Card"));
+		break;
+		case(2):
+			Serial.println(F("SD Card full. All monthly logs before this month should be copied over to the server. Contact IT for assistance."));
+		break;
+		case(3):
+			Serial.println(F("RTC Battery dead or RTC has broken. Try replacing the small watch battery in the electrical cabinet."));
+		break;
+	
+	}	
+	for (int i = 0; i<3; i++)
+	{
+		dispMaster.setChar(i,0,'E',0);
+		dispMaster.setLed(i, 1, 5, 1); //Approximation of letter r from here
+		dispMaster.setLed(i, 1, 7, 1);
+		dispMaster.setLed(i, 2, 5, 1);
+		dispMaster.setLed(i, 2, 7, 1); // to here
+		dispMaster.setDigit(i,3,code,0);
+	}
+	
+  //Err1 = no sd card present
+  //Err2 = sd card full
+  //Err3 = RTC battery dead or otherwise unavailable
+	
+	//Display for 10 seconds
+	delay(10000);
+} 
+
+//void memoryCapacityCheck()
+//{
+//	//Check the file size of all files on the SD Card
+//	//Add up all the file sizes and divide by 7939817472 (total capacity in bytes) to find % full
+//	//If SD Card usage is > 90, display Err2
+//	
+//	double usedMemory = 0;
+//	double totalMemory = 7939817472;
+//	
+//	File root = SD.open("/");
+//
+//	while(true)
+//	{
+//		File entry = root.openNextFile();
+//  
+//		if(!entry)
+//		{
+//			//If there are no more files, return to the top of the directory
+//			root.rewindDirectory();
+//			break;
+//		}
+//		
+//		usedMemory += entry.size();
+//	}
+//
+//  //If memory usage is greater than 90%, display an error
+//	if((usedMemory/totalMemory) > 0.9)
+//	{
+//		error(2);
+//	}
+//		
+//}
