@@ -70,6 +70,7 @@ void setup() {
   int i;
   int j;
   Serial.begin(115200);
+  Serial.println("Setup()");
 
   //WATCHDOG
   timer = timerBegin(0, 80, true);                  //timer 0, div 80
@@ -107,6 +108,7 @@ void setup() {
   for (i = 0; i <= 2; i++){
     for (j = 0; j <= numreadings - 1; j++){
       readingmtx[i][j] = 0;
+      readingmtx[i][j] = zero[i];
     }
   }
 
@@ -138,9 +140,8 @@ void setup() {
   }
 }
 
-
 void conn(){
-  
+  Serial.println("conn()");
   timerWrite(timer, 0); //reset timer (feed watchdog)
   
   WiFi.begin(ssid, password);
@@ -199,9 +200,11 @@ void conn(){
 
 void loop() {
   //ADJUST TIMING HERE
-  //delay(250);
+  delay(25);
   timerWrite(timer, 0); //reset timer (feed watchdog)
   client.loop();
+
+  Serial.println("loop()");
   
   float y;
   float sum = 0;
@@ -215,7 +218,7 @@ void loop() {
    }
    //ADJUST ZERO 'PAUSE' TIME HERE
    delay(2000);
-   String strzeroout = "Zero[0]: " + String(zero[0]) + ", Zero[1]: " + String(zero[1]) + ", Zero[2]: " + String(zero[2]);
+   String strzeroout = "Zero:" + String(zero[0]) + "," + String(zero[1]) + "," + String(zero[2]);
 
    Serial.println(strzeroout);
 
@@ -246,47 +249,33 @@ void loop() {
   //WRITE NEW VALS TO FIRST ROW OF COPYMTX, WRITE READINGMTX TO REMAINING ROWS
   for (i = 0; i <= 2; i++){
     y = analogRead(analogpins[i]);
-    y = (5.0*y)/409.6;
-    copymtx[i][0]= y + 105;
+    y = (5.0*y)/327.7;
+    copymtx[i][0]= 155 - y;
 
     for (j = 1; j <= numreadings - 1; j++){
       copymtx[i][j] = readingmtx[i][j-1];
     }
+    
   }
 
   //COPYMTX BACK TO READINGMTX (WITH NEW VALUES), CALCULATE AVGS
   for (i = 0; i <= 2; i++){
-    
-    //Serial.println("COPYMTX TO READINGMTX");
-    
     sum = 0;
     for (j = 0; j <= numreadings - 1; j++){
       readingmtx[i][j] = copymtx[i][j];
       sum = sum + readingmtx[i][j];
       if(j == 49){
         ma50[i]= sum/50;
-//        Serial.print("ma50[");
-//        Serial.print(i);
-//        Serial.print("]:");
-//        Serial.println(ma50[i]);
       }
       else if(j==249){
         ma250[i] = sum/250;
-//        Serial.print("ma250[");
-//        Serial.print(i);
-//        Serial.print("]:");
-//        Serial.println(ma250[i]);
       }
     }
     ma750[i] = sum / numreadings;
-//    Serial.print("ma750[");
-//    Serial.print(i);
-//    Serial.print("]:");
-//    Serial.println(ma750[i]);
 
     //REL OR ABS READING
     if (digitalRead(18) == LOW){
-      output[i] = -(ma750[i] - zero[i]);
+      output[i] = (ma750[i] - zero[i]);
     }
     else{
       output[i] = ma750[i];
@@ -300,13 +289,13 @@ void loop() {
       output[i] = output[i] -1.5;
     }
 
-//    Serial.print("output[");
-//    Serial.print(i);
-//    Serial.print("]:");
-//    Serial.println(output[i]);
+    Serial.print("output[");
+    Serial.print(i);
+    Serial.print("]: ");
+    Serial.println(output[i]);
+    
   }
-
-
+  
   timerWrite(timer, 0); //reset timer (feed watchdog)
 
   //MQTT OUT
@@ -350,7 +339,6 @@ void loop() {
   
   for(i = 0; i <=5; i++){
     client.loop();
-    //delay(5);
   }
   
   timerWrite(timer, 0); //reset timer (feed watchdog)
@@ -418,5 +406,4 @@ void loop() {
   }
 
   timerWrite(timer, 0); //reset timer (feed watchdog)
-  
 }
